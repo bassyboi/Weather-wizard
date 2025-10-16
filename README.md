@@ -45,3 +45,21 @@ CI (GitHub Actions)
 	•	ci.yml installs Python deps, caches pip, runs import tests, and boots the API to verify /health.
 	•	container-build.yml builds the container image on demand. Uncomment GHCR steps to push.
 ```
+
+## Georeferenced Nowcast (CF-lite)
+The persistence nowcast can attach lat/lon and CF-like metadata (no GDAL required).
+
+```bash
+# Demo (no input data): writes outputs/nowcast_60min.nc with lat/lon
+python pipelines/nowcast/persistence_nowcast.py --demo --out outputs/nowcast_60min.nc
+
+# Custom grid center / spacing (approximate degrees from km; lon scaled by cos(lat))
+python pipelines/nowcast/persistence_nowcast.py --demo \
+  --center-lat -27.62 --center-lon 151.77 --dx-km 2.0 --dy-km 2.0 \
+  --out outputs/nowcast_ddowns_60min.nc
+
+API tip: After generating the file, query metadata:
+
+uvicorn serve.api_fastapi:app --reload
+curl "http://127.0.0.1:8000/nowcast/meta?path=outputs/nowcast_60min.nc"
+
