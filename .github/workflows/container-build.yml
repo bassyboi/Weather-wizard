@@ -1,0 +1,26 @@
+name: container-build
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: |
+          docker build -f ops/docker/Dockerfile.api -t weather-wizard/api:ci .
+          docker image ls | grep weather-wizard
+# To push to GHCR:
+#      - name: Log in to GHCR
+#        uses: docker/login-action@v3
+#        with:
+#          registry: ghcr.io
+#          username: ${{ github.actor }}
+#          password: ${{ secrets.GITHUB_TOKEN }}
+#      - name: Tag & Push
+#        run: |
+#          IMAGE=ghcr.io/${{ github.repository_owner }}/weather-wizard-api:latest
+#          docker tag weather-wizard/api:ci $IMAGE
+#          docker push $IMAGE
