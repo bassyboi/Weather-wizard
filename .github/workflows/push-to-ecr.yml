@@ -1,0 +1,37 @@
+name: push-to-ecr
+on:
+  push:
+    branches: [ main ]
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ap-southeast-2
+      IMAGE_NAME: weather-wizard/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build
+        run: |
+          docker build -f ops/docker/Dockerfile.api -t $IMAGE_NAME:git-${GITHUB_SHA::7} .
+      - name: Tag & Push
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          docker tag $IMAGE_NAME:git-${GITHUB_SHA::7} $ECR_URI/$IMAGE_NAME:git-${GITHUB_SHA::7}
+          docker tag $IMAGE_NAME:git-${GITHUB_SHA::7} $ECR_URI/$IMAGE_NAME:latest
+          docker push $ECR_URI/$IMAGE_NAME:git-${GITHUB_SHA::7}
+          docker push $ECR_URI/$IMAGE_NAME:latest
