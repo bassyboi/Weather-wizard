@@ -58,6 +58,9 @@ python pipelines/nowcast/persistence_nowcast.py --demo \
   --center-lat -27.62 --center-lon 151.77 --dx-km 2.0 --dy-km 2.0 \
   --out outputs/nowcast_ddowns_60min.nc
 
+# Disable CF-lite geo metadata if you only need raw grids
+python pipelines/nowcast/persistence_nowcast.py --demo --no-geo --out outputs/nowcast_raw_60min.nc
+
 API tip: After generating the file, query metadata:
 
 uvicorn serve.api_fastapi:app --reload
