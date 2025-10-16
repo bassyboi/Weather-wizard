@@ -80,3 +80,29 @@ terraform apply -var="aws_region=ap-southeast-2" -var="project=weather-wizard" -
 - AWS_OIDC_ROLE_ARN → an IAM Role with ECR push perms, trusted for GitHub OIDC.
 
 Push to main and the workflow will build & push weather-wizard/api to ECR.
+
+Deploy API to AWS (ECS Fargate + ALB)
+1.Ensure your API image is in ECR (tagged :latest).
+2.Identify your VPC + subnets (public for ALB, private for tasks).
+3.Apply Terraform:
+
+export AWS_REGION=ap-southeast-2
+cd infra/ecs_api
+terraform init
+terraform apply \
+  -var="aws_region=$AWS_REGION" \
+  -var="project=weather-wizard" \
+  -var="env=dev" \
+  -var='vpc_id=vpc-xxxxxxxx' \
+  -var='public_subnet_ids=["subnet-aaaa","subnet-bbbb"]' \
+  -var='private_subnet_ids=["subnet-cccc","subnet-dddd"]' \
+  -var='api_image=123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/weather-wizard/api:latest'
+
+4.Output alb_dns_name will be printed. Test:
+
+curl http://<alb_dns_name>/health
+
+Notes
+•The service uses CloudWatch Logs at /ecs/<project>-<env>-api.
+•Security is set to allow inbound 80 (and 443 if enabled). Lock down allow_ingress_cidrs when ready.
+•Set desired_count to 2 for basic HA across subnets.
