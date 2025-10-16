@@ -63,3 +63,17 @@ API tip: After generating the file, query metadata:
 uvicorn serve.api_fastapi:app --reload
 curl "http://127.0.0.1:8000/nowcast/meta?path=outputs/nowcast_60min.nc"
 
+
+## AWS (minimal bootstrap)
+1) Create ECR + S3 with Terraform:
+```bash
+cd infra/aws
+terraform init
+terraform apply -var="aws_region=ap-southeast-2" -var="project=weather-wizard" -var="env=dev"
+```
+
+2) In GitHub repo settings, add secret:
+
+- AWS_OIDC_ROLE_ARN → an IAM Role with ECR push perms, trusted for GitHub OIDC.
+
+Push to main and the workflow will build & push weather-wizard/api to ECR.
