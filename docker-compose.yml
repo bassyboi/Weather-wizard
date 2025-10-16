@@ -1,0 +1,20 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.api
+    image: weather-wizard/api:dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DATA_DIR=/data
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

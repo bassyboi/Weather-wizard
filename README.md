@@ -28,3 +28,20 @@ uvicorn serve.api_fastapi:app --reload
 # in another terminal
 curl "http://127.0.0.1:8000/nowcast/meta?path=outputs/nowcast_60min.nc"
 ```
+
+## Run with Docker
+```bash
+# build & run with docker-compose
+docker compose up --build
+
+# or plain docker
+docker build -f ops/docker/Dockerfile.api -t weather-wizard/api:dev .
+docker run --rm -p 8000:8000 -e DATA_DIR=/data -v $(pwd)/outputs:/app/outputs -v $(pwd)/data:/data weather-wizard/api:dev
+
+# health check
+curl http://127.0.0.1:8000/health
+
+CI (GitHub Actions)
+	•	ci.yml installs Python deps, caches pip, runs import tests, and boots the API to verify /health.
+	•	container-build.yml builds the container image on demand. Uncomment GHCR steps to push.
+```

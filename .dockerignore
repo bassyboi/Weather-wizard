@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Envs & caches
+.venv/
+.env
+*.env
+.cache/
+pip-wheel-metadata/
+
+# Data & outputs
+data/
+outputs/
+
+# VCS & OS
+.git/
+.gitignore
+.DS_Store
