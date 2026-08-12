@@ -2,52 +2,58 @@ name: ci
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.11']
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          python -m pip install -c requirements.lock.txt -r requirements-dev.txt
 
-      - name: Import smoke tests
-        run: |
-          python - << 'PY'
-import importlib
-mods = ["fastapi","uvicorn"]
-for m in mods:
-    importlib.import_module(m)
-print("imports ok")
-PY
+      - name: Unit and integration tests
+        run: python -m pytest -q
 
-      - name: Boot API smoke test
+      - name: Scenario engine demo
+        run: python -m examples.ordcast_demo > /tmp/ordcast-demo.json
+
+      - name: Persistence baseline smoke test
+        run: >-
+          python -m pipelines.nowcast.persistence_nowcast
+          --demo
+          --out /tmp/nowcast_60min.nc
+
+      - name: API health smoke test
         run: |
-          nohup uvicorn serve.api_fastapi:app --host 127.0.0.1 --port 8000 >/tmp/api.log 2>&1 &
-          for i in {1..20}; do
-            curl -fsS http://127.0.0.1:8000/health && break
+          uvicorn serve.api_fastapi:app --host 127.0.0.1 --port 8000 >/tmp/api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8000/health >/tmp/health.json; then
+              exit 0
+            fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:8000/health | tee /tmp/health.json
-          pkill -f "uvicorn serve.api_fastapi:app" || true
+          cat /tmp/api.log
+          exit 1
+
+  container:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f ops/docker/Dockerfile.api -t ordcast/api:ci .
