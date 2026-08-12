@@ -12,7 +12,7 @@ Every six hours the default profile records:
 - the official Kununurra Airport (`002056`, WMO `94216`) 72-hour observation JSON;
 - the current complete GEFS cycle: control plus 30 perturbed members, every six-hour
   lead from 0 to 240 hours, and a small 125–132°E / 12–20°S Ord subset; and
-- the preceding six hours of Himawari-9 Band 13 at ten-minute cadence, downloading
+- the preceding seven hours of Himawari-9 Band 13 at ten-minute cadence, downloading
   only native full-disk segment 7, which covers the Ord district.
 
 The GEFS fields include precipitation, CAPE/CIN, helicity, precipitable water,
@@ -28,6 +28,13 @@ would add roughly 9–10 GB per day. It should be enabled as a separately budget
 phase after the smaller archive is proven reliable.
 
 ## Run locally
+
+For the supported automatic Windows deployment, use
+[the local PC guide](LOCAL_PC.md). It stores every cycle in one persistent archive
+root, prevents overlapping runs, wakes the PC on schedule, and provides a health
+command.
+
+The low-level two-command interface remains useful for development:
 
 The two commands intentionally separate planning from network activity:
 
@@ -86,10 +93,16 @@ objects and every other failure remain in the run report. The scheduled workflow
 requires 100% completeness, uploads all successful partial data and that report, and
 only then marks an incomplete run failed.
 
-## Turn on the GitHub schedule
+The seven-hour satellite window deliberately overlaps a six-hour local schedule so
+ordinary scheduler drift does not create gaps. Content-addressed blobs deduplicate the
+overlap. A PC that remains off longer still needs an explicit backfill/gap workflow;
+an individually complete cycle does not prove the whole archive is continuous.
 
-The workflow `.github/workflows/archive-live-data.yml` runs at minute 37 every six
-hours on the default branch. It refuses to run until these repository secrets exist:
+## Optional GitHub/AWS publisher
+
+The workflow `.github/workflows/archive-live-data.yml` is now manual-only because the
+chosen starter deployment is the local Windows PC. It remains an optional AWS fallback
+and refuses to run until these repository secrets exist:
 
 - `AWS_OIDC_ROLE_ARN`: an AWS role trusted only for this repository's default-branch
   GitHub OIDC subject;
@@ -104,11 +117,8 @@ overwrite a different one. With the default plan this is roughly 2,600 immutable
 files per cycle; publication runs eight create-only uploads in parallel, with blobs
 completed before their manifests.
 
-GitHub-hosted schedules are useful for proving the first archive but are not a
-guaranteed meteorological service. Once the collection is stable, move the same CLI
-into an AWS EventBridge/ECS job with alarms and separate schedules: approximately
-10-minute observations, 20-minute-lag satellite scans, and GEFS cycle collection
-after about T+5:45.
+No AWS configuration is needed for local operation. If the manual cloud publisher is
+ever enabled, its hosted runner still is not a guaranteed meteorological service.
 
 ## Operational acceptance checks
 

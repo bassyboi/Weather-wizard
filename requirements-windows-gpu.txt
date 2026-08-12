@@ -1,0 +1,7 @@
+# Optional, isolated Windows 10/11 GPU environment for DirectX 12 hardware.
+# Keep this separate from requirements.lock.txt: torch-directml pins an older
+# PyTorch/NumPy-compatible stack than the recorder and API currently use.
+numpy==1.26.4; platform_system == "Windows" and python_version >= "3.11" and python_version < "3.13"
+torch-directml==0.2.5.dev240914; platform_system == "Windows" and python_version >= "3.11" and python_version < "3.13"
+onnxruntime-directml==1.24.4; platform_system == "Windows" and python_version >= "3.11" and python_version < "3.13"
+onnx==1.22.0; platform_system == "Windows" and python_version >= "3.11" and python_version < "3.13"

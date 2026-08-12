@@ -253,3 +253,44 @@ def test_blob_deduplication_keeps_separate_semantic_records(tmp_path):
     assert first.sha256 == second.sha256
     assert len(list((store.root / "blobs" / "sha256").rglob(first.sha256))) == 1
     assert len(list(store.iter_records(source="gefs"))) == 2
+
+
+def test_windows_atomic_publication_uses_rename_without_directory_fsync(
+    monkeypatch, tmp_path
+):
+    destination = tmp_path / "published"
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Windows publication must not open/fsync a directory")
+
+    real_open = os.open
+
+    def guarded_open(path, flags, *args, **kwargs):
+        if path == tmp_path:
+            return forbidden()
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded_open)
+
+    assert ArchiveStore._atomic_exclusive_create(
+        destination, b"windows-safe", _windows=True
+    )
+    assert destination.read_bytes() == b"windows-safe"
+    assert not list(tmp_path.glob(".ordcast-tmp-*"))
+
+
+def test_windows_atomic_publication_preserves_a_concurrent_winner(monkeypatch, tmp_path):
+    destination = tmp_path / "published"
+    destination.write_bytes(b"winner")
+
+    def windows_rename(source, target):
+        assert target == destination
+        raise FileExistsError(target)
+
+    monkeypatch.setattr(os, "rename", windows_rename)
+
+    assert not ArchiveStore._atomic_exclusive_create(
+        destination, b"loser", _windows=True
+    )
+    assert destination.read_bytes() == b"winner"
+    assert not list(tmp_path.glob(".ordcast-tmp-*"))

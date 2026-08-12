@@ -479,8 +479,18 @@ class ArchiveStore:
         return copied
 
     @staticmethod
-    def _atomic_exclusive_create(path: Path, payload: bytes) -> bool:
-        """Publish bytes atomically without ever replacing an existing path."""
+    def _atomic_exclusive_create(
+        path: Path, payload: bytes, *, _windows: bool | None = None
+    ) -> bool:
+        """Publish bytes atomically without ever replacing an existing path.
+
+        POSIX uses a hard-link publication so rename cannot replace a concurrent
+        winner. Windows ``os.rename`` already fails when the destination exists and
+        works on NTFS, FAT, and exFAT; it also avoids Windows directory-fsync and
+        read-only-hard-link cleanup failures.
+        """
+
+        windows = os.name == "nt" if _windows is None else _windows
         temporary = path.parent / f"{_TEMP_PREFIX}{os.getpid()}-{uuid.uuid4().hex}"
         descriptor: int | None = None
         try:
@@ -494,16 +504,25 @@ class ArchiveStore:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            try:
-                os.link(temporary, path)
-            except FileExistsError:
-                return False
+            if windows:
+                try:
+                    os.rename(temporary, path)
+                except FileExistsError:
+                    return False
+            else:
+                try:
+                    os.link(temporary, path)
+                except FileExistsError:
+                    return False
             os.chmod(path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-            directory_fd = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            if not windows:
+                directory_fd = os.open(
+                    path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                )
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
             return True
         finally:
             if descriptor is not None:
