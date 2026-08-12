@@ -215,7 +215,7 @@ without degraded calibration or important extremes. ROC-AUC alone is insufficien
 | Gate | Deliverable | Promotion evidence |
 |---|---|---|
 | 0 — foundation | **v0.1:** schemas, marginal fusion, SILO ingestion/analog baseline, CRPS/Brier, maturity-aware hindcast, API | deterministic tests and CI |
-| 1 — archive | Kununurra/farm observations plus immutable issued GEFS/ECMWF cycles | completeness, latency, QC dashboards |
+| 1 — archive | **Starter implemented:** immutable Kununurra Aero, regional GEFS, and Himawari inputs; farm observations and budgeted ECMWF follow | completeness, latency, gap, and QC dashboards |
 | 2 — baseline | climatology, raw/bias-corrected ensemble, trained local analog | rolling 2000–2019 scorecard |
 | 3 — nowcast | Himawari growth + Wyndham motion/uncertainty | storm-blocked 0–6 h verification |
 | 4 — RET weather | regime gate, event generator, joint coupling and constraints | calibrated joint scenarios, golden issues |

@@ -44,6 +44,8 @@ inventing interpolated tail mass.
 - `ordcast.evaluation`: forecast-first, learn-after walk-forward hindcasts.
 - `ordcast.metrics`: ensemble CRPS and Brier score.
 - `pipelines.ingest.silo_daily`: validated, immutable Kununurra Aero SILO snapshots.
+- `pipelines.ingest.live_archive`: bounded live collection plans and raw-data recorder.
+- `ordcast.archive`: append-only, content-addressed source archive with provenance.
 - `ordcast.daily_baseline`: 1/3/7-day seasonal-and-antecedent rain analog baseline.
 - `POST /v1/marginals`: versioned FastAPI marginal-fusion endpoint.
 - Stationary radar persistence retained only as a mandatory benchmark baseline.
@@ -68,7 +70,7 @@ flowchart TD
 The current release implements a common source contract for cumulative rainfall from
 issue time through each horizon, the analog path, marginal fusion, verification, and
 API. Joint trajectory coupling, regime classification,
-operational data adapters, event generation, calibration, physical constraints, and
+additional data adapters, event generation, calibration, physical constraints, and
 the farm twin are the next milestones.
 
 ## Quick start
@@ -184,6 +186,22 @@ Bureau public-feed terms and subscriber products need a licensing decision befor
 commercial or public service. Raw forecast inputs will be archived immutably from day
 one because several free operational feeds retain only recent cycles.
 
+## Live-data recorder
+
+The next milestone is now implemented: a bounded starter recorder for Kununurra
+Airport observations, all 31 regional GEFS members, and native Himawari-9 infrared
+segment 7. It freezes explicit issue/scan times, retains exact response bytes and
+availability metadata, and refuses overwrites. A scheduled GitHub workflow can upload
+the archive create-only to an S3 prefix after AWS OIDC secrets are configured.
+
+```bash
+python -m pipelines.ingest.live_archive plan --output data/live-archive/run-001
+python -m pipelines.ingest.live_archive record --output data/live-archive/run-001
+```
+
+See [`docs/LIVE_ARCHIVE.md`](docs/LIVE_ARCHIVE.md) before enabling the schedule,
+especially the Bureau licensing constraint and source-specific rainfall semantics.
+
 ## Persistence benchmark
 
 The old stationary-radar code remains as a deliberately weak baseline:
@@ -199,8 +217,8 @@ remain unfinished; the synthetic latitude/longitude helper is for demonstrations
 
 ## Roadmap
 
-1. Freeze schemas and archive Kununurra observations plus issued open ensembles.
-2. Build rainfall climatology, raw-NWP, bias-corrected, and analog baselines.
+1. Run and monitor the new live archive through the 2026–27 wet season.
+2. Build rainfall climatology, raw-NWP, bias-corrected, and analog baselines from it.
 3. Add rolling GEFSv12 wet-season hindcasts with confidence intervals.
 4. Add Himawari cloud-growth and Wyndham radar motion scenarios for 0–6 hours.
 5. Train the Ord regime gate and coherent event generator.
