@@ -58,7 +58,9 @@ def _write_report(
     )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     path = directory / f"live-{completed_at:%Y%m%dT%H%M%SZ}-{digest[:16]}.json"
-    path.write_text(payload, encoding="utf-8")
+    # Production reports are canonical bytes. Text-mode writes translate LF to CRLF
+    # on Windows and would deliberately fail that integrity check.
+    path.write_bytes(payload.encode("utf-8"))
     return path
 
 
@@ -220,7 +222,7 @@ def test_status_rejects_future_and_internally_inconsistent_reports(tmp_path):
     digest = hashlib.sha256(payload.encode()).hexdigest()
     replacement = path.with_name(f"live-{now:%Y%m%dT%H%M%SZ}-{digest[:16]}.json")
     path.unlink()
-    replacement.write_text(payload, encoding="utf-8")
+    replacement.write_bytes(payload.encode("utf-8"))
     assert local_station_status(bad_root, now=now).state == "fault"
 
 

@@ -255,8 +255,11 @@ def _update_continuity(
 
 
 def _lock_byte(handle: object) -> None:
-    handle.seek(0)  # type: ignore[attr-defined]
-    if handle.read(1) == b"":  # type: ignore[attr-defined]
+    # Inspect the length without reading byte zero. Windows denies a second handle's
+    # read of an already locked region before ``msvcrt.locking`` gets a chance to
+    # return the expected overlap error.
+    handle.seek(0, os.SEEK_END)  # type: ignore[attr-defined]
+    if handle.tell() == 0:  # type: ignore[attr-defined]
         handle.seek(0)  # type: ignore[attr-defined]
         handle.write(b"0")  # type: ignore[attr-defined]
         handle.flush()  # type: ignore[attr-defined]
