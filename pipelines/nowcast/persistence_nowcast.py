@@ -7,11 +7,20 @@ from pipelines.ingest.radar_schema import normalize
 from pipelines.preprocess.geo import make_latlon, attach_cf
 from pipelines.preprocess.cf_utils import set_compression
 
-def dbz_to_rainrate(dbz):
+def dbz_to_rainrate(dbz, minimum_dbz=5.0):
     # Marshall–Palmer: Z = 200 R^1.6, with Z = 10^(dBZ/10)
-    Z = np.power(10.0, dbz/10.0)
-    R = np.power(np.maximum(Z/200.0, 0.0), 1.0/1.6)
-    return R.astype(np.float32)
+    values = np.asarray(dbz, dtype=np.float64)
+    threshold = float(minimum_dbz)
+    if not np.isfinite(threshold):
+        raise ValueError("minimum_dbz must be finite")
+    rain = np.full(values.shape, np.nan, dtype=np.float64)
+    finite = np.isfinite(values)
+    rain[finite & (values < threshold)] = 0.0
+    wet = finite & (values >= threshold)
+    with np.errstate(over="ignore", invalid="ignore"):
+        reflectivity = np.power(10.0, values[wet] / 10.0)
+        rain[wet] = np.power(np.maximum(reflectivity / 200.0, 0.0), 1.0 / 1.6)
+    return rain.astype(np.float32)
 
 def make_demo_cube(ny=120, nx=160, frames=12):
     """Generate a synthetic 60-min reflectivity stack (dBZ) at 5-min steps."""
@@ -68,8 +77,8 @@ def main():
     ds = persistence_forecast(dbz, steps=12, step_minutes=5)
 
     if args.geo:
-        ny = ds.dims.get("y", None)
-        nx = ds.dims.get("x", None)
+        ny = ds.sizes.get("y", None)
+        nx = ds.sizes.get("x", None)
         if ny is None or nx is None:
             raise ValueError("Expected dims (y,x) in forecast output")
         lats, lons = make_latlon(ny, nx, args.center_lat, args.center_lon, args.dx_km, args.dy_km)
@@ -81,7 +90,7 @@ def main():
     else:
         enc = set_compression(ds, ["rainrate"])
         ds.to_netcdf(args.out, encoding=enc)
-    print(f"Wrote {args.out} :: vars={list(ds.data_vars)} dims={dict(ds.dims)} region={args.region} geo={args.geo}")
+    print(f"Wrote {args.out} :: vars={list(ds.data_vars)} dims={dict(ds.sizes)} region={args.region} geo={args.geo}")
 
 if __name__ == "__main__":
     main()

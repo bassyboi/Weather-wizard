@@ -25,4 +25,4 @@ variable "allow_ingress_cidrs" {
   type = list(string)
   default = ["0.0.0.0/0"]  # lock down later
 }
-variable "data_dir"        { type = string  default = "/data" } # example env
+variable "data_dir"        { type = string  default = "/data" } # forecast metadata directory; attach durable storage for production

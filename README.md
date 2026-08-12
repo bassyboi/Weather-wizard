@@ -1,108 +1,232 @@
-Hybrid AI + Physics weather engine for Australia.
+# OrdCast RET
 
-## Quickstart
+An experimental software scaffold for an intended **Regime–Event–Twin** weather
+forecasting system for farms in Kununurra and the Ord River district.
+
+OrdCast does not try to rerun a global atmosphere model on a laptop. Global
+ensembles supply the large-scale possibilities; OrdCast is designed to learn which
+sources work locally, build coherent local weather scenarios, and translate those scenarios
+into farm decisions such as spray-window survival, irrigation demand, heat exposure,
+trafficability, and wet-season progress.
+
+> **Research status:** this repository is not an official Bureau of Meteorology
+> forecast and must not yet be used for safety-critical decisions. The first slice is
+> a tested lead-by-lead marginal-fusion engine and hindcast framework, not a trained
+> operational forecast model.
+
+## What is new here
+
+Most weather apps show one best estimate. The intended full OrdCast will retain whole
+futures. Its three planned layers are:
+
+1. **Regime** — will estimate probabilities for local dry trade, build-up convection,
+   monsoon break, active monsoon, and tropical-low environments.
+2. **Event** — will represent storms as coherent onset, duration, path, amount, and gust
+   events rather than unrelated hourly rain values.
+3. **Twin** — will run every weather scenario through a mass-conserving field water and
+   operations model.
+
+Every source earns a separate weight at every forecast horizon through past local
+probabilistic skill. Stale inputs fade. Local analogs may use only cases whose outcomes
+were already available at the issue time. Output is a lead-specific distribution—
+P10/P50/P90 and threshold probabilities rather than only one best number. The current
+v0.1 weights can differ by lead, so its rows are not yet coherent joint trajectories
+and must not be used for event-path or farm-twin calculations. A documented exact
+empirical-CDF projection keeps cumulative rainfall physically non-decreasing without
+inventing interpolated tail mass.
+
+## Implemented in v0.1
+
+- `ordcast.types`: validated source and fused lead-time distributions.
+- `ordcast.skill`: horizon-specific prequential CRPS ledger and freshness weighting.
+- `ordcast.fusion`: lead-specific marginal mixtures preserving spread and tails.
+- `ordcast.analog`: robust-distance local analogs with target-maturity cut-offs.
+- `ordcast.evaluation`: forecast-first, learn-after walk-forward hindcasts.
+- `ordcast.metrics`: ensemble CRPS and Brier score.
+- `pipelines.ingest.silo_daily`: validated, immutable Kununurra Aero SILO snapshots.
+- `pipelines.ingest.live_archive`: bounded live collection plans and raw-data recorder.
+- `ordcast.archive`: append-only, content-addressed source archive with provenance.
+- `ordcast.daily_baseline`: 1/3/7-day seasonal-and-antecedent rain analog baseline.
+- `POST /v1/marginals`: versioned FastAPI marginal-fusion endpoint.
+- Stationary radar persistence retained only as a mandatory benchmark baseline.
+- Unit and integration tests plus a valid GitHub Actions workflow.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A["Available-at issue time"] --> B["Local state + regime"]
+    B --> C["Radar / satellite scenarios"]
+    B --> D["Global ensemble scenarios"]
+    B --> E["Past Ord analog scenarios"]
+    C --> F["Local skill + freshness weights"]
+    D --> F
+    E --> F
+    F --> G["Lead-time probability marginals"]
+    G --> H["Future joint-trajectory coupling"]
+    H --> I["Field water + operations twin"]
+```
+
+The current release implements a common source contract for cumulative rainfall from
+issue time through each horizon, the analog path, marginal fusion, verification, and
+API. Joint trajectory coupling, regime classification,
+additional data adapters, event generation, calibration, physical constraints, and
+the farm twin are the next milestones.
+
+## Quick start
+
+Requires Python 3.11 or newer.
+
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -c requirements.lock.txt -r requirements-dev.txt
+python -m pytest -q
+python -m examples.ordcast_demo
 uvicorn serve.api_fastapi:app --reload
 ```
 
-## Run Persistence Nowcast
+Open `http://127.0.0.1:8000/docs` for the interactive API.
+Requests are capped at 1 MB, 16 sources, 512 members per source, and 64 horizons;
+production ingress must enforce the same body limit.
+
+Example request:
+
 ```bash
-# demo mode (no input data needed)
-python pipelines/nowcast/persistence_nowcast.py --demo --out outputs/nowcast_60min.nc
-
-# or with real input (NetCDF/Zarr containing 'reflectivity' or 'dbz')
-python pipelines/nowcast/persistence_nowcast.py --in /path/to/latest_90min.zarr --out outputs/nowcast_60min.nc
-
+curl -s http://127.0.0.1:8000/v1/marginals \
+  -H 'content-type: application/json' \
+  -d '{
+    "horizons_hours": [1, 6, 24],
+    "sources": [
+      {
+        "name": "satellite_radar",
+        "members_mm": [[0, 4, 12], [2, 10, 35]],
+        "recent_crps": [1.0, 3.0, 10.0],
+        "age_hours": 0.25,
+        "half_life_hours": 1.5
+      },
+      {
+        "name": "global_ensemble",
+        "members_mm": [[0, 2, 15], [1, 8, 45], [3, 18, 75]],
+        "recent_crps": [4.0, 4.0, 7.0],
+        "age_hours": 2,
+        "half_life_hours": 12
+      }
+    ]
+  }'
 ```
 
-## Query Nowcast Metadata via API
+## First real-data baseline
+
+SILO requires a contact email on point-data API requests. Keep it in an environment
+variable rather than source control. The downloader creates the raw response and a
+`.manifest.json` sidecar exclusively (never overwriting either); the manifest records
+retrieval time in UTC, SHA-256, row coverage, and non-sensitive request parameters:
+
 ```bash
-# generate a demo nowcast first
-python pipelines/nowcast/persistence_nowcast.py --demo --out outputs/nowcast_60min.nc
+export SILO_USERNAME='your-contact-email@example.com'
+python -m pipelines.ingest.silo_daily \
+  --station 2056 \
+  --start 1971-01-01 \
+  --finish 2026-08-11 \
+  --out data/silo/kununurra-aero-rain-1971-2026.csv
 
-# run API
-uvicorn serve.api_fastapi:app --reload
-
-# in another terminal
-curl "http://127.0.0.1:8000/nowcast/meta?path=outputs/nowcast_60min.nc"
+python -m pipelines.baseline.silo_daily_analog \
+  --csv data/silo/kununurra-aero-rain-1971-2026.csv \
+  --analogs 40
 ```
 
-## Run with Docker
+This is a daily climatology/analog benchmark for Kununurra Aero station 2056, not a
+live storm forecast. It matches day of year plus 7/30-day antecedent rain state and
+returns 1/3/7-day cumulative rain distributions. The query defaults to 09:00 AWST on
+the day after the snapshot's last date. Conservatively, features use rows only through
+`issue_date - 1`, the issue-date row is skipped, and targets begin at `issue_date + 1`.
+SILO station series patch missing observations with interpolated values and may revise
+history, which is why exact snapshot bytes and source codes are retained. A current
+snapshot supports present-day analog inference and climatology only. The CLI rejects
+historical issue dates because a vintage-correct hindcast requires the snapshot that
+was actually available at each old forecast cutoff.
+
+## Honest verification contract
+
+A forecast model is not promoted unless it beats the strongest simple baseline on
+predeclared targets with blocked, rolling wet-season hindcasts. Rules:
+
+- each record stores `event_time`, `available_at`, model cycle, member, and version;
+- only data with `available_at <= issue_time` may become a feature;
+- fit scalers, regimes, feature selection, and calibration inside each training fold;
+- keep complete storm events together and purge overlapping target windows;
+- train only on targets whose verification interval had ended before the test issue;
+- report build-up, wet, and dry periods separately;
+- score distributions with CRPS, probabilities with Brier/reliability, and quantiles
+  with pinball loss and interval coverage;
+- compare against climatology, persistence, raw ensemble, simple bias correction, and
+  radar/satellite advection for the short range.
+
+The first target scorecard is 24-hour rainfall CRPS and Brier skill for rain above
+10 mm at days 1–5, plus timing error for first rain. Farm outputs follow once the
+meteorological primitives have demonstrated out-of-sample skill.
+
+## Data plan
+
+The initial open-data path is:
+
+- Kununurra Aero observations and farm sensors for local truth;
+- SILO snapshots for long daily climatology and labels;
+- Himawari-8/9 native imagery for cloud growth and movement;
+- Wyndham radar for an optical-flow prototype, with its range/clutter/attenuation
+  limits kept visible;
+- archived issued GEFS/GFS and ECMWF IFS/AIFS ensembles for operational scenarios;
+- GEFSv12 reforecasts for an initial 2000–2019 rolling hindcast;
+- BARRA2/ERA5/IMERG as training context or verification, never as historical inputs
+  pretending they were available before issue time;
+- RONI, DMI, and continuous MJO RMM1/RMM2 for longer-range regime forecasts.
+
+Bureau public-feed terms and subscriber products need a licensing decision before a
+commercial or public service. Raw forecast inputs will be archived immutably from day
+one because several free operational feeds retain only recent cycles.
+
+## Live-data recorder
+
+The next milestone is now implemented: a bounded starter recorder for Kununurra
+Airport observations, all 31 regional GEFS members, and native Himawari-9 infrared
+segment 7. It freezes explicit issue/scan times, retains exact response bytes and
+availability metadata, and refuses overwrites. A scheduled GitHub workflow can upload
+the archive create-only to an S3 prefix after AWS OIDC secrets are configured.
+
 ```bash
-# build & run with docker-compose
-docker compose up --build
-
-# or plain docker
-docker build -f ops/docker/Dockerfile.api -t weather-wizard/api:dev .
-docker run --rm -p 8000:8000 -e DATA_DIR=/data -v $(pwd)/outputs:/app/outputs -v $(pwd)/data:/data weather-wizard/api:dev
-
-# health check
-curl http://127.0.0.1:8000/health
-
-CI (GitHub Actions)
-	•	ci.yml installs Python deps, caches pip, runs import tests, and boots the API to verify /health.
-	•	container-build.yml builds the container image on demand. Uncomment GHCR steps to push.
+python -m pipelines.ingest.live_archive plan --output data/live-archive/run-001
+python -m pipelines.ingest.live_archive record --output data/live-archive/run-001
 ```
 
-## Georeferenced Nowcast (CF-lite)
-The persistence nowcast can attach lat/lon and CF-like metadata (no GDAL required).
+See [`docs/LIVE_ARCHIVE.md`](docs/LIVE_ARCHIVE.md) before enabling the schedule,
+especially the Bureau licensing constraint and source-specific rainfall semantics.
+
+## Persistence benchmark
+
+The old stationary-radar code remains as a deliberately weak baseline:
 
 ```bash
-# Demo (no input data): writes outputs/nowcast_60min.nc with lat/lon
-python pipelines/nowcast/persistence_nowcast.py --demo --out outputs/nowcast_60min.nc
-
-# Custom grid center / spacing (approximate degrees from km; lon scaled by cos(lat))
-python pipelines/nowcast/persistence_nowcast.py --demo \
-  --center-lat -27.62 --center-lon 151.77 --dx-km 2.0 --dy-km 2.0 \
-  --out outputs/nowcast_ddowns_60min.nc
-
-# Disable CF-lite geo metadata if you only need raw grids
-python pipelines/nowcast/persistence_nowcast.py --demo --no-geo --out outputs/nowcast_raw_60min.nc
-
-API tip: After generating the file, query metadata:
-
-uvicorn serve.api_fastapi:app --reload
-curl "http://127.0.0.1:8000/nowcast/meta?path=outputs/nowcast_60min.nc"
-
-
-## AWS (minimal bootstrap)
-1) Create ECR + S3 with Terraform:
-```bash
-cd infra/aws
-terraform init
-terraform apply -var="aws_region=ap-southeast-2" -var="project=weather-wizard" -var="env=dev"
+python -m pipelines.nowcast.persistence_nowcast \
+  --demo \
+  --out outputs/nowcast_60min.nc
 ```
 
-2) In GitHub repo settings, add secret:
+It is not the operational forecast. Real-data geolocation and radar quality control
+remain unfinished; the synthetic latitude/longitude helper is for demonstrations only.
 
-- AWS_OIDC_ROLE_ARN → an IAM Role with ECR push perms, trusted for GitHub OIDC.
+## Roadmap
 
-Push to main and the workflow will build & push weather-wizard/api to ECR.
+1. Run and monitor the new live archive through the 2026–27 wet season.
+2. Build rainfall climatology, raw-NWP, bias-corrected, and analog baselines from it.
+3. Add rolling GEFSv12 wet-season hindcasts with confidence intervals.
+4. Add Himawari cloud-growth and Wyndham radar motion scenarios for 0–6 hours.
+5. Train the Ord regime gate and coherent event generator.
+6. Add physical constraints and the field water/operations twin.
+7. Shadow-run forecasts through the 2026–27 wet season before operational claims.
 
-Deploy API to AWS (ECS Fargate + ALB)
-1.Ensure your API image is in ECR (tagged :latest).
-2.Identify your VPC + subnets (public for ALB, private for tasks).
-3.Apply Terraform:
+## Name transition
 
-export AWS_REGION=ap-southeast-2
-cd infra/ecs_api
-terraform init
-terraform apply \
-  -var="aws_region=$AWS_REGION" \
-  -var="project=weather-wizard" \
-  -var="env=dev" \
-  -var='vpc_id=vpc-xxxxxxxx' \
-  -var='public_subnet_ids=["subnet-aaaa","subnet-bbbb"]' \
-  -var='private_subnet_ids=["subnet-cccc","subnet-dddd"]' \
-  -var='api_image=123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/weather-wizard/api:latest'
-
-4.Output alb_dns_name will be printed. Test:
-
-curl http://<alb_dns_name>/health
-
-Notes
-•The service uses CloudWatch Logs at /ecs/<project>-<env>-api.
-•Security is set to allow inbound 80 (and 443 if enabled). Lock down allow_ingress_cidrs when ready.
-•Set desired_count to 2 for basic HA across subnets.
+The repository is still named `Weather-wizard` for compatibility. The model and API
+are now called **OrdCast RET**. A repository rename can follow after the architecture is
+accepted.

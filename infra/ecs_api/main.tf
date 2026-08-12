@@ -186,7 +186,8 @@ resource "aws_ecs_task_definition" "api" {
       }]
       environment = [
         { name = "PORT", value = tostring(var.container_port) },
-        { name = "DATA_DIR", value = var.data_dir }
+        { name = "DATA_DIR", value = var.data_dir },
+        { name = "FORECAST_DIR", value = var.data_dir }
       ]
       logConfiguration = {
         logDriver = "awslogs"

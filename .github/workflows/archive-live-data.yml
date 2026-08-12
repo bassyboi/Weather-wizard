@@ -1,0 +1,247 @@
+# Required repository secrets:
+#   AWS_OIDC_ROLE_ARN      IAM role trusted by this repository's GitHub OIDC subject.
+#   ORDCAST_ARCHIVE_S3_URI Exact destination, for example s3://bucket/ordcast/live.
+#
+# The role trust policy should restrict GitHub's OIDC subject to this repository's
+# default branch. Its S3 policy only needs GetObject and PutObject on the configured
+# prefix. No ListBucket or delete permission is required.
+name: archive-live-data
+
+on:
+  schedule:
+    # Offset from the hour to reduce contention on GitHub's scheduled runners.
+    - cron: "37 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ordcast-live-data-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ap-southeast-2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set archive workspace and fixed collection slot
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ARCHIVE_ROOT=$RUNNER_TEMP/ordcast-archive" >> "$GITHUB_ENV"
+          now_epoch=$(date -u +%s)
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            # Anchor delayed scheduled runs to the most recent 00:37/06:37/12:37/18:37
+            # slot. This keeps adjacent six-hour satellite windows contiguous.
+            slot_epoch=$((now_epoch - ((now_epoch - 2220) % 21600)))
+          else
+            slot_epoch=$now_epoch
+          fi
+          archive_as_of=$(date -u --date="@$slot_epoch" +%Y-%m-%dT%H:%M:%SZ)
+          echo "ARCHIVE_AS_OF=$archive_as_of" >> "$GITHUB_ENV"
+
+      - name: Validate archive configuration
+        shell: bash
+        env:
+          AWS_OIDC_ROLE_ARN: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+          ORDCAST_ARCHIVE_S3_URI: ${{ secrets.ORDCAST_ARCHIVE_S3_URI }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "$EXPECTED_REF" ]]; then
+            echo "::error::Live archival may only run from the repository's default branch."
+            exit 1
+          fi
+          if [[ -z "${AWS_OIDC_ROLE_ARN:-}" ]]; then
+            echo "::error::Required secret AWS_OIDC_ROLE_ARN is not configured."
+            exit 1
+          fi
+          if [[ -z "${ORDCAST_ARCHIVE_S3_URI:-}" ]]; then
+            echo "::error::Required secret ORDCAST_ARCHIVE_S3_URI is not configured."
+            exit 1
+          fi
+          if [[ ! "$ORDCAST_ARCHIVE_S3_URI" =~ ^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](/[^[:space:]?#]*)?/?$ ]]; then
+            echo "::error::ORDCAST_ARCHIVE_S3_URI must be an explicit s3://bucket[/prefix] URI without whitespace, a query, or a fragment."
+            exit 1
+          fi
+          archive_destination="${ORDCAST_ARCHIVE_S3_URI#s3://}"
+          if [[ "$archive_destination" == *"//"* ||
+                "$archive_destination" == *"/../"* ||
+                "$archive_destination" == *"/./"* ||
+                "$archive_destination" == */.. ||
+                "$archive_destination" == */. ]]; then
+            echo "::error::ORDCAST_ARCHIVE_S3_URI contains an ambiguous path segment."
+            exit 1
+          fi
+
+      - name: Install recorder dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -c requirements.lock.txt -r requirements.txt
+
+      - name: Plan archive cycle
+        run: |
+          set -euo pipefail
+          if [[ -e "$ARCHIVE_ROOT" ]]; then
+            echo "::error::Archive workspace unexpectedly exists; refusing to reuse it."
+            exit 1
+          fi
+          mkdir -p -- "$ARCHIVE_ROOT"
+          python -m pipelines.ingest.live_archive plan \
+            --output "$ARCHIVE_ROOT" \
+            --as-of "$ARCHIVE_AS_OF"
+
+      - name: Record available data
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          python -m pipelines.ingest.live_archive record \
+            --output "$ARCHIVE_ROOT" \
+            --min-success-ratio 1.0
+          recorder_status=$?
+          set -e
+          echo "RECORDER_EXIT_STATUS=$recorder_status" >> "$GITHUB_ENV"
+          # Successful source responses and the failure report are valuable even
+          # when the completeness threshold is missed. Upload them before failing.
+          exit 0
+
+      - name: Reject unsafe or empty output
+        run: |
+          set -euo pipefail
+          if find "$ARCHIVE_ROOT" -type l -print -quit | grep -q .; then
+            echo "::error::Recorder output contains a symbolic link; refusing to upload."
+            exit 1
+          fi
+          file_count=$(find "$ARCHIVE_ROOT" -type f -printf '.' | wc -c)
+          if [[ "$file_count" -eq 0 ]]; then
+            echo "::error::Recorder produced no archive files."
+            exit 1
+          fi
+          echo "Recorder produced $file_count files."
+
+      # Credentials are requested only after all untrusted remote payloads have
+      # been downloaded, validated, and written beneath ARCHIVE_ROOT.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          role-duration-seconds: 3600
+          role-session-name: ordcast-live-archive
+
+      - name: Sync immutable files to S3 (create-only)
+        shell: bash
+        env:
+          ORDCAST_ARCHIVE_S3_URI: ${{ secrets.ORDCAST_ARCHIVE_S3_URI }}
+        run: |
+          set -euo pipefail
+
+          destination="${ORDCAST_ARCHIVE_S3_URI#s3://}"
+          bucket="${destination%%/*}"
+          if [[ "$destination" == "$bucket" ]]; then
+            prefix=""
+          else
+            prefix="${destination#*/}"
+            prefix="${prefix#/}"
+            prefix="${prefix%/}"
+          fi
+
+          expected_owner=$(aws sts get-caller-identity --query Account --output text)
+          upload_status_dir="$RUNNER_TEMP/ordcast-upload-status"
+          mkdir -p -- "$upload_status_dir"
+
+          upload_one() {
+            set -uo pipefail
+            local file="$1"
+            local relative="${file#"$ARCHIVE_ROOT"/}"
+            local key
+            if [[ -n "$prefix" ]]; then
+              key="$prefix/$relative"
+            else
+              key="$relative"
+            fi
+            local local_sha
+            local_sha=$(sha256sum -- "$file" | awk '{print $1}')
+
+            # If-None-Match makes each object create-only. A concurrent writer can
+            # win, but this run will never overwrite that writer's object.
+            if aws s3api put-object \
+              --bucket "$bucket" \
+              --key "$key" \
+              --body "$file" \
+              --if-none-match '*' \
+              --expected-bucket-owner "$expected_owner" \
+              --server-side-encryption AES256 \
+              --metadata "sha256=$local_sha" \
+              --checksum-algorithm SHA256 \
+              >/dev/null; then
+              mktemp "$upload_status_dir/created.XXXXXX" >/dev/null
+              return 0
+            fi
+
+            # The create-only PUT failed because an object may already exist. Verify
+            # it idempotently; any different or uninspectable object fails closed.
+            local remote_sha
+            remote_sha=$(aws s3api head-object \
+              --bucket "$bucket" \
+              --key "$key" \
+              --expected-bucket-owner "$expected_owner" \
+              --query 'Metadata.sha256' \
+              --output text 2>/dev/null || true)
+            if [[ "$remote_sha" == "$local_sha" ]]; then
+              mktemp "$upload_status_dir/reused.XXXXXX" >/dev/null
+              return 0
+            else
+              echo "::error::Archive collision or create-only upload failure at key '$key'."
+              return 1
+            fi
+          }
+
+          upload_phase() {
+            local phase="$1"
+            shift
+            echo "Publishing immutable archive phase: $phase"
+            find "$@" -type f -print0 \
+              | sort -z \
+              | xargs -0 -r -n1 -P8 bash -c 'upload_one "$1"' _
+          }
+
+          export -f upload_one
+          export ARCHIVE_ROOT bucket prefix expected_owner upload_status_dir
+          # Publish content before references. A failed run can leave harmless
+          # unreferenced blobs, but never a manifest pointing to a missing blob.
+          upload_phase blobs "$ARCHIVE_ROOT/blobs"
+          upload_phase manifests "$ARCHIVE_ROOT/records"
+          upload_phase plans "$ARCHIVE_ROOT/plans"
+          upload_phase reports "$ARCHIVE_ROOT/runs"
+
+          uploaded=$(find "$upload_status_dir" -type f -name 'created.*' -printf '.' | wc -c)
+          reused=$(find "$upload_status_dir" -type f -name 'reused.*' -printf '.' | wc -c)
+          echo "Immutable archive sync complete: $uploaded created, $reused already present."
+
+      - name: Enforce recorder completeness after preserving partial data
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RECORDER_EXIT_STATUS:-1}" -ne 0 ]]; then
+            echo "::error::Recorder completeness threshold failed; partial data and its report were preserved."
+            exit "$RECORDER_EXIT_STATUS"
+          fi
