@@ -59,7 +59,7 @@ def test_default_starter_plan_has_three_sources_and_bounded_artifacts() -> None:
     )
 
     assert plan.sources == ("bom", "gefs", "himawari")
-    assert len(plan.artifacts) == 1 + (31 * 41) + 36
+    assert len(plan.artifacts) == 1 + (31 * 41) + 42
     assert len({artifact.source_key for artifact in plan.artifacts}) == len(plan.artifacts)
     assert max(artifact.max_bytes for artifact in plan.artifacts) <= 15_000_000
     assert [artifact.source for artifact in plan.artifacts[:3]] == [

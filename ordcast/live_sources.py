@@ -522,7 +522,10 @@ def plan_live_artifacts(
     if "gefs" in selected:
         artifacts.extend(plan_gefs_ord(as_of))
     if "himawari" in selected:
-        artifacts.extend(plan_himawari_ord(as_of))
+        # Seven hours gives scheduled local runs an hour of overlap. Content-addressed
+        # storage deduplicates that overlap; it also avoids ten-minute holes from
+        # normal Task Scheduler drift around a nominal six-hour cadence.
+        artifacts.extend(plan_himawari_ord(as_of, lookback_hours=7))
     return artifacts
 
 

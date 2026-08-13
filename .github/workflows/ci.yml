@@ -57,3 +57,42 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build API image
         run: docker build -f ops/docker/Dockerfile.api -t ordcast/api:ci .
+
+  windows-local:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -c requirements.lock.txt -r requirements-dev.txt
+      - name: Parse local PowerShell scripts
+        shell: pwsh
+        run: |
+          $allErrors = @()
+          Get-ChildItem ops/windows/*.ps1 | ForEach-Object {
+            $tokens = $null
+            $fileErrors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$fileErrors
+            )
+            $allErrors += $fileErrors
+          }
+          if ($allErrors.Count -gt 0) {
+            $allErrors | Format-List | Out-String | Write-Error
+          }
+      - name: Windows archive, lock, and local-station tests
+        shell: pwsh
+        run: >-
+          python -m pytest -q
+          tests/test_archive.py
+          tests/test_local_station.py
+          tests/test_accelerator.py
+          tests/test_windows_local_station.py

@@ -50,6 +50,8 @@ inventing interpolated tail mass.
 - `POST /v1/marginals`: versioned FastAPI marginal-fusion endpoint.
 - Stationary radar persistence retained only as a mandatory benchmark baseline.
 - Unit and integration tests plus a valid GitHub Actions workflow.
+- Persistent one-PC collection, health status, and overlap protection.
+- Real DirectML/CUDA arithmetic and inference-provider checks.
 
 ## Architecture
 
@@ -186,21 +188,23 @@ Bureau public-feed terms and subscriber products need a licensing decision befor
 commercial or public service. Raw forecast inputs will be archived immutably from day
 one because several free operational feeds retain only recent cycles.
 
-## Live-data recorder
+## Local PC weather station
 
-The next milestone is now implemented: a bounded starter recorder for Kununurra
-Airport observations, all 31 regional GEFS members, and native Himawari-9 infrared
-segment 7. It freezes explicit issue/scan times, retains exact response bytes and
-availability metadata, and refuses overwrites. A scheduled GitHub workflow can upload
-the archive create-only to an S3 prefix after AWS OIDC secrets are configured.
+The supported starter deployment is now a normal Windows PC with a local data drive.
+It records Kununurra Airport observations, all 31 regional GEFS members, and native
+Himawari-9 infrared segment 7. It freezes exact issue/scan times, retains response
+bytes and availability metadata, and refuses overwrites. No AWS or Cloudflare account
+is required.
 
-```bash
-python -m pipelines.ingest.live_archive plan --output data/live-archive/run-001
-python -m pipelines.ingest.live_archive record --output data/live-archive/run-001
-```
+On Windows, double-click **ops\windows\INSTALL-ORDCAST-LOCAL.cmd**. It creates fresh,
+versioned collector and DirectML GPU environments, checks real GPU arithmetic, and
+registers a limited current-user task that stores data locally every six hours. No
+administrator approval is required. The stable status shortcut is copied to
+**%LOCALAPPDATA%\OrdCast\ORDCAST-STATUS.cmd**.
 
-See [`docs/LIVE_ARCHIVE.md`](docs/LIVE_ARCHIVE.md) before enabling the schedule,
-especially the Bureau licensing constraint and source-specific rainfall semantics.
+See [the local PC guide](docs/LOCAL_PC.md) for plain-language setup and hardware
+boundaries, and [the archive contract](docs/LIVE_ARCHIVE.md) for source-specific
+rainfall semantics.
 
 ## Persistence benchmark
 
@@ -217,13 +221,14 @@ remain unfinished; the synthetic latitude/longitude helper is for demonstrations
 
 ## Roadmap
 
-1. Run and monitor the new live archive through the 2026–27 wet season.
-2. Build rainfall climatology, raw-NWP, bias-corrected, and analog baselines from it.
-3. Add rolling GEFSv12 wet-season hindcasts with confidence intervals.
-4. Add Himawari cloud-growth and Wyndham radar motion scenarios for 0–6 hours.
-5. Train the Ord regime gate and coherent event generator.
-6. Add physical constraints and the field water/operations twin.
-7. Shadow-run forecasts through the 2026–27 wet season before operational claims.
+1. Run and monitor the local PC archive through the 2026–27 wet season.
+2. Decode the local archive and issue raw GEFS shadow forecasts.
+3. Train an RX-6600-XT DirectML bias correction and beat the raw-NWP baseline.
+4. Add rolling GEFSv12 wet-season hindcasts with confidence intervals.
+5. Add Himawari cloud-growth and Wyndham radar motion scenarios for 0–6 hours.
+6. Train the Ord regime gate and coherent event generator.
+7. Add physical constraints and the field water/operations twin.
+8. Shadow-run forecasts through the 2026–27 wet season before operational claims.
 
 ## Name transition
 

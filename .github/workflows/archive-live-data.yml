@@ -8,9 +8,8 @@
 name: archive-live-data
 
 on:
-  schedule:
-    # Offset from the hour to reduce contention on GitHub's scheduled runners.
-    - cron: "37 */6 * * *"
+  # The supported starter deployment now records to the owner's Windows PC.
+  # Keep this AWS publisher available only as an explicit optional fallback.
   workflow_dispatch:
 
 permissions:
