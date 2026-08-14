@@ -1,0 +1,85 @@
+name: bom-kununurra-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/github-live-smoke
+
+permissions:
+  contents: read
+
+jobs:
+  collect-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal runtime dependency
+        run: python -m pip install -c requirements.lock.txt numpy
+
+      - name: Collect and verify one Kununurra Bureau observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_root=$(mktemp -d "$RUNNER_TEMP/ordcast-bom-smoke.XXXXXX")
+          trap 'rm -rf -- "$archive_root"' EXIT
+          export ARCHIVE_ROOT="$archive_root"
+
+          python -m pipelines.local_station cycle \
+            --archive-root "$ARCHIVE_ROOT" \
+            --sources bom \
+            --workers 1 \
+            --deadline-seconds 120 \
+            --min-success-ratio 1.0
+
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from ordcast.archive import ArchiveStore
+          from ordcast.local_station import local_station_status
+          from pipelines.ingest.live_archive import read_plan
+
+          root = Path(os.environ["ARCHIVE_ROOT"])
+          plans = list((root / "plans").glob("live-*.json"))
+          reports = list((root / "runs").glob("live-*.json"))
+          manifests = list((root / "records").rglob("*.json"))
+          blobs = list((root / "blobs" / "sha256").glob("*/*"))
+
+          if tuple(map(len, (plans, reports, manifests, blobs))) != (1, 1, 1, 1):
+              raise RuntimeError("expected exactly one plan, report, manifest, and blob")
+
+          plan = read_plan(plans[0])
+          if plan.sources != ("bom",) or len(plan.artifacts) != 1:
+              raise RuntimeError("the smoke plan was not exactly one Bureau artifact")
+
+          status = local_station_status(
+              root,
+              stale_after_hours=1.0,
+              minimum_free_bytes=0,
+          )
+          if status.state != "healthy":
+              raise RuntimeError(f"local station status was {status.state}")
+          if (
+              status.planned_artifacts,
+              status.recorded_artifacts,
+              status.failed_artifacts,
+          ) != (1, 1, 0):
+              raise RuntimeError("the collection report did not record one clean artifact")
+
+          records = list(
+              ArchiveStore(root).iter_records(source="bom-kununurra-observations")
+          )
+          if len(records) != 1 or blobs[0].name != records[0].sha256:
+              raise RuntimeError("the verified Bureau record and blob did not match")
+
+          print("REMOTE_SMOKE_OK: one Kununurra Bureau record passed integrity checks")
+          PY
