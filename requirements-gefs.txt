@@ -1,0 +1,3 @@
+-r requirements.txt
+# Optional CPU GRIB decoder; no torch, DirectML, or GPU required.
+eccodes>=2.38,<3
