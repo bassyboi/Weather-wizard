@@ -235,3 +235,9 @@ remain unfinished; the synthetic latitude/longitude helper is for demonstrations
 The repository is still named `Weather-wizard` for compatibility. The model and API
 are now called **OrdCast RET**. A repository rename can follow after the architecture is
 accepted.
+
+### Experimental raw GEFS shadow baseline
+
+The offline [GEFS shadow baseline](docs/GEFS_SHADOW.md) now decodes archived
+rainfall into the existing forecast contract, with full-member and availability
+checks. This is uncalibrated and unvalidated; it does not make OrdCast operational.
